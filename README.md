@@ -1,4 +1,4 @@
-# THIS IS A EXPERIMENTAL BRANCH
+# THIS IS AN EXPERIMENTAL BRANCH
 In this branch I'm adding support for AWS Route53 Hosted Zones and also
 a rewrite of the dockerddns file. 
 Other important change is that the files has been renamed from 
