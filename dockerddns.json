@@ -8,6 +8,7 @@
     "zonename"   : "dynamic.mydomain.ntld",
     "intprefix"  : "",
     "extprefix"  : "",
-    "engine"     : "bind"
+    "engine"     : "bind",
+    "hostedzone" : "ROUTE53HOSTEDZONEID"
   }
 }
