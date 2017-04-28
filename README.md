@@ -14,7 +14,7 @@ docker run -it --rm \
 # Config Needed
 
 ## dockerddns.json
-
+```
 {
   "dockerddns": {
     "apiversion" : "auto",
@@ -39,7 +39,7 @@ extprefix  = IPv6 on the external network
 apiversion = specify the api version to use when talking to the docker server, auto by default
 engine     = dns engine, currently bind and aws route53
 hostedzone = Route53 Hosted Zone Id
-
+```
 for how to use intprefix and extprefix please check this gists:
 https://gist.github.com/mbartsch/5f0b0ab414d3e901f38388792a88321c
 
