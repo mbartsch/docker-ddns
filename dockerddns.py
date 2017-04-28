@@ -89,7 +89,6 @@ def updatedns(action, event):
                                              config['dockerddns']['extprefix'])
             event['ipv6'] = ipv6addr
     if config['dockerddns']['engine'] == "bind":
-        logging.info('Calling bind')
         return dockerbind(action, event, config)
     elif config['dockerddns']['engine'] == "route53":
         return docker53(action, event, config)
@@ -201,7 +200,7 @@ def dockerbind(action, event, config):
     port = config['dockerddns']['dnsport']
     update = dns.update.Update(config['dockerddns']['zonename'],
                                keyring=config['keyring'], keyname=config['dockerddns']['keyname'])
-
+    logging.debug('EVENT: %s', event)
     if "srvrecords" in event:
         srvrecords = event["srvrecords"].split()
         for srv in srvrecords:
@@ -210,11 +209,11 @@ def dockerbind(action, event, config):
 
     if action == 'start' and event['ip'] != '0.0.0.0':
         update.replace(event['hostname'], ttl, 'A', event['ip'])
-        if "ipv6" in event:
+        if event['ipv6'] != '':
             update.replace(event['hostname'], ttl, 'AAAA', event['ipv6'])
             logging.info('[%s] Updating dns %s , setting %s.%s to %s and %s',\
-                    event['name'], dnsserver, event['hostname'], config['dockerddns']['zonename'],\
-                    event['ip'], event['ipv6'])
+                event['name'], dnsserver, event['hostname'], config['dockerddns']['zonename'],\
+                event['ip'], event['ipv6'])
         else:
             logging.info('[%s] Updating dns %s , setting %s.%s to %s',\
                     event['name'], dnsserver, event['hostname'],\
