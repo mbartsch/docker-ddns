@@ -21,6 +21,7 @@ logging.getLogger("botocore").setLevel(logging.CRITICAL)
 
 CONFIGFILE = 'dockerddns.json'
 TSIGFILE = 'secrets.json'
+VERSION = 'rewrite1'
 
 
 def loadconfig():
@@ -73,7 +74,6 @@ def container_info(container):
         container['ipv6'] = \
                 inspect["NetworkSettings"]["Networks"][networkmode]["GlobalIPv6Address"]
     else:
-        print(inspect)
         return False
     return container
 
@@ -247,7 +247,21 @@ def process():
     """
     This is the main function that will be called everytime this run
     """
-    client = docker.from_env()
+    config = loadconfig()
+    logging.info('Starting Docker DDNS Python Container %s', VERSION)
+    logging.info('Using %s as dns engine', config['dockerddns']['engine'])
+    logging.info('Docker Python SDK Version: %s',docker.constants.version)
+    logging.info('Lower Docker API: %s',docker.constants.MINIMUM_DOCKER_API_VERSION)
+    if "apiversion" in config['dockerddns']:
+        if float(config['dockerddns']['apiversion']) <= float(docker.constants.MINIMUM_DOCKER_API_VERSION):
+                logging.error('Can use API Version lower than supported by docker python SDK')
+                logging.error('Requested Version: %s', config['dockerddns']['apiversion'])
+                logging.error('Minimum Supported Docker API Version: %s', docker.constants.MINIMUM_DOCKER_API_VERSION)
+                sys.exit(3)
+    else:
+        config['dockerddns']['apiversion'] = "auto"
+    logging.info('Requested Docker API Version: %s', config['dockerddns']['apiversion'])
+    client = docker.from_env(version=config['dockerddns']['apiversion'])
     events = client.events(decode=True)
     startup(client)
     for event in events:

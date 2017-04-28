@@ -12,22 +12,26 @@ docker run -it --rm \
 
 {
   "dockerddns": {
-    "dnsserver" : "my.dns.server",
-    "dnsport"   : 53,
-    "keyname"   : "my.dns.key",
-    "zonename"  : "dynamic.mydomain.ntld",
-    "intprefix" : "",
-    "extprefix" : "",
-    "ttl"       : 60
+    "apiversion" : "auto",
+    "dnsserver"  : "my.dns.server",
+    "dnsport"    : 53,
+    "keyname"    : "my.dns.key",
+    "zonename"   : "dynamic.mydomain.ntld",
+    "intprefix"  : "",
+    "extprefix"  : "",
+    "ttl"        : 60,
+    "engine"     : "bind"
   }
 }
 
-dnsserver = hostname of bind
-dnsport   = port used by bind , you can change it if 53 is blocked
-keyname   = the keyname
-zonename  = ddns zone
-intprefix = IPv6 prefix on the internal network
-extprefix = IPv6 on the external network
+dnsserver  = hostname of bind
+dnsport    = port used by bind , you can change it if 53 is blocked
+keyname    = the keyname
+zonename   = ddns zone
+intprefix  = IPv6 prefix on the internal network
+extprefix  = IPv6 on the external network
+apiversion = specify the api version to use when talking to the docker server, auto by default
+engine     = dns engine, currently bind and aws route53
 
 for how to use intprefix and extprefix please check this gists:
 https://gist.github.com/mbartsch/5f0b0ab414d3e901f38388792a88321c
