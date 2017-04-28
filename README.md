@@ -1,14 +1,19 @@
+# THIS IS A EXPERIMENTAL BRANCH
+In this branch I'm adding support for AWS Route53 Hosted Zones and also
+a rewrite of the dockerddns file. 
+Other important change is that the files has been renamed from 
+docker-ddns to dockerddns
 
 # Hot To Run
 docker run -it --rm \
 	-v /var/run/docker.sock:/var/run/docker.sock \
 	-v /myconfiglocation/secrets.json:/ddns/secrets.json \
-	-v /myconfiglocation/docker-ddns.json:/ddns/docker-ddns.json \
+	-v /myconfiglocation/dockerddns.json:/ddns/dockerddns.json \
 	 mbartsch/ddns:0
 
 # Config Needed
 
-## docker-ddns.json
+## dockerddns.json
 
 {
   "dockerddns": {
