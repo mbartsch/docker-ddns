@@ -8,7 +8,7 @@ import logging
 import socket
 import sys
 
-import boto3
+
 import dns
 import dns.query
 import dns.tsigkeyring
@@ -25,8 +25,10 @@ CONFIGFILE = 'dockerddns2.json'
 TSIGFILE = 'secrets.json'
 VERSION = 'rewrite1'
 
+
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1", "on")
+
 
 def loadconfig():
     """
@@ -37,8 +39,9 @@ def loadconfig():
     config = json.load(configfh)
     configfh.close()
 
-    parser = argparse.ArgumentParser(description="Docker Dynamic DNS updater",
-                                     epilog="All parameters must be configured on the config file, even if they are empty")
+    parser = argparse.ArgumentParser(
+        description="Docker Dynamic DNS updater",
+        epilog="All parameters must be configured on the config file, even if they are empty")
     parser.add_argument("--apiversion",
                         default=config['apiversion'],
                         help="Docker api version")
@@ -62,9 +65,12 @@ def loadconfig():
     parser.add_argument("--extprefix", default=config['extprefix'],
                         metavar='2001:db32::',
                         help="External IPv6 Prefix")
-    parser.add_argument("--ipv6replace", default=config['ipv6replace'], type=str2bool,
-                        metavar='true/false',
-                        help="replace intip with extip when updating the dns on IPv6")
+    parser.add_argument(
+        "--ipv6replace",
+        default=config['ipv6replace'],
+        type=str2bool,
+        metavar='true/false',
+        help="replace intip with extip when updating the dns on IPv6")
     args = parser.parse_args()
 
     print(config)
@@ -80,9 +86,9 @@ def loadconfig():
 
 def startup(client):
     """
-    This will do the initial check of already running containers and register them
-    there is no cleanup if a container dies while this process is down, so you may
-    have some leftovers after a while
+    This will do the initial check of already running containers and register
+    them there is no cleanup if a container dies while this process is down,
+    so you may have some leftovers after a while
     """
     logging.debug('Check running containers and update DDNS')
     for container in client.containers.list():
@@ -111,7 +117,8 @@ def container_info(container):
     if (str(networkmode) != 'host') and ('container:' not in networkmode):
         if str(networkmode) == "default":
             networkmode = "bridge"
-        container['ip'] = inspect["NetworkSettings"]["Networks"][networkmode]["IPAddress"]
+        container['ip'] = \
+            inspect["NetworkSettings"]["Networks"][networkmode]["IPAddress"]
         container['ipv6'] = \
             inspect["NetworkSettings"]["Networks"][networkmode]["GlobalIPv6Address"]
     else:
@@ -121,7 +128,8 @@ def container_info(container):
 
 def updatedns(action, event):
     """
-    This function will prepare the information from docker before send it to the dns engine
+    This function will prepare the information from docker before send
+    it to the dns engine
     """
 
     config = loadconfig()
@@ -155,15 +163,17 @@ def docker53(action, event, config):
 
     if action == "start":
         action = "UPSERT"
-        change = {'Action': action, 'ResourceRecordSet': {'Name': event['hostname'], \
-                'Type': 'A', 'TTL': 300, 'ResourceRecords': [ \
-                {'Value': event['ip']}]}}
+        change = {'Action': action,
+                  'ResourceRecordSet': {'Name': event['hostname'],
+                                        'Type': 'A',
+                                        'TTL': 300,
+                                        'ResourceRecords': [{'Value': event['ip']}]}}
         changes.append(change)
         if "ipv6" in event:
-            change = {'Action': action, 'ResourceRecordSet': \
-                    {'Name': event['hostname'], 'Type': 'AAAA', \
-                    'TTL': 300, 'ResourceRecords': [ \
-                    {'Value': event['ipv6']}]}}
+            change = {'Action': action, 'ResourceRecordSet':
+                      {'Name': event['hostname'], 'Type': 'AAAA',
+                       'TTL': 300, 'ResourceRecords': [
+                          {'Value': event['ipv6']}]}}
         changes.append(change)
         if "ipv6" in event:
             change = {'Action': 'UPSERT', 'ResourceRecordSet':
@@ -216,38 +226,45 @@ def docker53(action, event, config):
 #        #"""
         if responsev6['ResourceRecordSets'] \
                 and responsev6['ResourceRecordSets'][0]['Name'] == event['hostname']:
-            change = {'Action': action, 'ResourceRecordSet':
-                      {'Name': event['hostname'], 'Type': 'AAAA',
-                       'TTL': 300, 'ResourceRecords': [
-                          {'Value': responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']}]}}
+            change = {
+                'Action': action,
+                'ResourceRecordSet': {
+                    'Name': event['hostname'],
+                    'Type': 'AAAA',
+                    'TTL': 300,
+                    'ResourceRecords': [
+                        {
+                            'Value': responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']}]}}
             changes.append(change)
-            logging.info('[%s] Removing %s from route53 with ipv6 %s',
-                         event['name'], event['hostname'],
-                         responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
+            logging.info(
+                '[%s] Removing %s from route53 with ipv6 %s',
+                event['name'],
+                event['hostname'],
+                responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
 
         if response['ResourceRecordSets'] and \
                 response['ResourceRecordSets'][0]['Name'] == event['hostname']:
-            change = {'Action': action,
-                      'ResourceRecordSet':
-                      {'Name': event['hostname'],
-                       'Type': 'A',
-                       'TTL': 300,
-                       'ResourceRecords':
-                       [
-                           {
-                               'Value': response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']
-                           }
-                       ]
-                      }
-                     }
+            change = {
+                'Action': action,
+                'ResourceRecordSet': {
+                    'Name': event['hostname'],
+                    'Type': 'A',
+                    'TTL': 300,
+                    'ResourceRecords': [
+                        {
+                            'Value': response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']}]}}
             changes.append(change)
-            logging.info('[%s] Removing %s from route53 with ip %s',
-                         event['name'], event['hostname'],
-                         response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
+            logging.info(
+                '[%s] Removing %s from route53 with ip %s',
+                event['name'],
+                event['hostname'],
+                response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
 
-    change = {'Action': action , 'ResourceRecordSet': {'Name': event['hostname'], \
-            'Type': 'TXT', 'TTL': 300, 'ResourceRecords': [ \
-            {'Value': event['id']}]}}
+    change = {'Action': action,
+              'ResourceRecordSet': {'Name': event['hostname'],
+                                    'Type': 'TXT',
+                                    'TTL': 300,
+                                    'ResourceRecords': [{'Value': event['id']}]}}
     changes.append(change)
     response = client.change_resource_record_sets(
         HostedZoneId=config['hostedzone'],
@@ -263,8 +280,10 @@ def dockerbind(action, event, config):
     dnsserver = config['dnsserver']
     ttl = config['ttl']
     port = config['dnsport']
-    update = dns.update.Update(config['zonename'],
-                               keyring=config['keyring'], keyname=config['keyname'])
+    update = dns.update.Update(
+        config['zonename'],
+        keyring=config['keyring'],
+        keyname=config['keyname'])
     logging.debug('EVENT: %s', event)
     if "srvrecords" in event:
         srvrecords = event["srvrecords"].split()
@@ -272,14 +291,19 @@ def dockerbind(action, event, config):
             values = srv.split("#")
             print("%s %s\n" % (values, event['hostname']))
 
-    #update.replace(event['hostname'], ttl, 'TXT', "ContainerId:" + event['id'] + ",DockerHost:" + event['host'])
+#    update.replace(event['hostname'], ttl, 'TXT', "ContainerId:" + event['id'] + ",DockerHost:" + event['host'])
     if action == 'start' and event['ip'] != '0.0.0.0':
         update.replace(event['hostname'], ttl, 'A', event['ip'])
         if event['ipv6'] != '':
             update.replace(event['hostname'], ttl, 'AAAA', event['ipv6'])
-            logging.info('[%s] Updating dns %s , setting %s.%s to %s and %s',
-                         event['name'], dnsserver, event['hostname'], config['zonename'],
-                         event['ip'], event['ipv6'])
+            logging.info(
+                '[%s] Updating dns %s , setting %s.%s to %s and %s',
+                event['name'],
+                dnsserver,
+                event['hostname'],
+                config['zonename'],
+                event['ip'],
+                event['ipv6'])
         else:
             logging.info('[%s] Updating dns %s , setting %s.%s to %s',
                          event['name'], dnsserver, event['hostname'],
@@ -323,7 +347,8 @@ def process():
         if config['apiversion'] == "auto":
             config['apiversion'] = docker.constants.DEFAULT_DOCKER_API_VERSION
         print(config['apiversion'])
-        if float(config['apiversion']) < float(docker.constants.MINIMUM_DOCKER_API_VERSION):
+        if float(config['apiversion']) < float(
+                docker.constants.MINIMUM_DOCKER_API_VERSION):
             logging.error(
                 'Can\'t use API Version lower than supported by docker python SDK')
             logging.error('Requested Version: %s', config['apiversion'])
@@ -337,13 +362,17 @@ def process():
     events = client.events(decode=True)
     startup(client)
     for event in events:
-        if event['Type'] == "container" and event['Action'] in ('start', 'die'):
+        if event['Type'] == "container" and event['Action'] in (
+                'start', 'die'):
             temp = client.containers.get(event['id'])
             containerinfo = container_info(json.dumps(temp.attrs))
             if event['Action'] == 'start':
                 if containerinfo:
-                    logging.debug("Container %s is starting with hostname %s and ipAddr %s", containerinfo['name'],
-                                  containerinfo['hostname'], containerinfo['ip'])
+                    logging.debug(
+                        "Container %s is starting with hostname %s and ipAddr %s",
+                        containerinfo['name'],
+                        containerinfo['hostname'],
+                        containerinfo['ip'])
                     updatedns(event['Action'], containerinfo)
             elif event['Action'] == 'die':
                 if containerinfo:
