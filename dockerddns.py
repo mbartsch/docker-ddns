@@ -2,23 +2,26 @@
 """sample doc
 
 """
-import logging
+import argparse
 import json
-import sys
+import logging
 import socket
-import docker
+import sys
+
+import boto3
 import dns
+import dns.query
 import dns.tsigkeyring
 import dns.update
-import dns.query
+import docker
 
-
-logging.basicConfig(format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
 logging.getLogger("requests").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.CRITICAL)
 
-CONFIGFILE = 'dockerddns.json'
+CONFIGFILE = 'dockerddns2.json'
 TSIGFILE = 'secrets.json'
 VERSION = 'rewrite1'
 
@@ -32,10 +35,43 @@ def loadconfig():
     config = json.load(configfh)
     configfh.close()
     logging.debug('Loading DNS Key Data')
+
+    parser = argparse.ArgumentParser(description="Dynamic DNS updater",
+                                     epilog="")
+    parser.add_argument("--apiversion",
+                        default=config['apiversion'],
+                        help="Docker api version")
+    parser.add_argument("--dnsserver", default=config['dnsserver'],
+                        help="dns host to update")
+    parser.add_argument("--dnsport", default=config['dnsport'],
+                        help="DNS port to update")
+    parser.add_argument("--ttl", default=config['ttl'],
+                        help="Default TTL for the records")
+    parser.add_argument("--keyname", default=config['keyname'],
+                        help="Keyname from secrets.json")
+    parser.add_argument("--zonename", default=config['zonename'],
+                        help="Zone to update")
+    parser.add_argument("--engine", default=config['engine'],
+                        help="DNS Engine to use [bind|route53]")
+    parser.add_argument("--hostedzone", default=config['hostedzone'],
+                        help="Route53 Hostedzone ID")
+    parser.add_argument("--intprefix", default=config['intprefix'],
+                        help="Internal IPv6 Prefix")
+    parser.add_argument("--extprefix", default=config['extprefix'],
+                        help="External IPv6 Prefix")
+    parser.add_argument("--ipv6replace", default=config['ipv6replace'],
+                        help="replace intip with extip when updating the dns on IPv6")
+    args = parser.parse_args()
+
+    print(config)
+    config = vars(args)
     tsighandle = open(TSIGFILE, mode='r')
     config['keyring'] = dns.tsigkeyring.from_text(json.load(tsighandle))
     tsighandle.close()
+    print("ARGS: %s" % config)
+
     return config
+
 
 def startup(client):
     """
@@ -72,10 +108,11 @@ def container_info(container):
             networkmode = "bridge"
         container['ip'] = inspect["NetworkSettings"]["Networks"][networkmode]["IPAddress"]
         container['ipv6'] = \
-                inspect["NetworkSettings"]["Networks"][networkmode]["GlobalIPv6Address"]
+            inspect["NetworkSettings"]["Networks"][networkmode]["GlobalIPv6Address"]
     else:
         return False
     return container
+
 
 def updatedns(action, event):
     """
@@ -84,15 +121,16 @@ def updatedns(action, event):
 
     config = loadconfig()
     if "ipv6" in event:
-        if event['ipv6'] != "" and config['dockerddns']['ipv6replace'] is True:
-            ipv6addr = event['ipv6'].replace(config['dockerddns']['intprefix'], \
-                                             config['dockerddns']['extprefix'])
+        if event['ipv6'] != "" and config['ipv6replace'] is True:
+            ipv6addr = event['ipv6'].replace(config['intprefix'],
+                                             config['extprefix'])
             event['ipv6'] = ipv6addr
-    if config['dockerddns']['engine'] == "bind":
+    if config['engine'] == "bind":
         return dockerbind(action, event, config)
-    elif config['dockerddns']['engine'] == "route53":
+    elif config['engine'] == "route53":
         return docker53(action, event, config)
     return False
+
 
 def docker53(action, event, config):
     """
@@ -103,12 +141,12 @@ def docker53(action, event, config):
     changes = []
 
     try:
-        hostedzone = client.get_hosted_zone(Id=config['dockerddns']['hostedzone'])
-        event['hostname'] = event['hostname'] + "." + hostedzone['HostedZone']['Name']
+        hostedzone = client.get_hosted_zone(Id=config['hostedzone'])
+        event['hostname'] = event['hostname'] + \
+            "." + hostedzone['HostedZone']['Name']
     except Exception as exception:
         logging.exception('%s', exception)
         return
-
 
     if action == "start":
         action = "UPSERT"
@@ -121,91 +159,107 @@ def docker53(action, event, config):
                     {'Name': event['hostname'], 'Type': 'AAAA', \
                     'TTL': 300, 'ResourceRecords': [ \
                     {'Value': event['ipv6']}]}}
+        changes.append(change)
+        if "ipv6" in event:
+            change = {'Action': 'UPSERT', 'ResourceRecordSet':
+                      {'Name': event['hostname'], 'Type': 'AAAA',
+                       'TTL': 300, 'ResourceRecords': [
+                          {'Value': event['ipv6']}]}}
             changes.append(change)
         else:
             event['ipv6'] = "None"
             changes.append(change)
         if event['ipv6']:
-            logging.info('[%s] Updating route53, setting %s to ipv6 %s',\
-                    event['name'], event['hostname'],\
-                    event['ipv6'])
-        logging.info('[%s] Updating route53, setting %s to ipv4 %s',\
-                event['name'], event['hostname'],\
-                event['ip'])
+            logging.info('[%s] Updating route53, setting %s to ipv6 %s',
+                         event['name'], event['hostname'],
+                         event['ipv6'])
+        logging.info('[%s] Updating route53, setting %s to ipv4 %s',
+                     event['name'], event['hostname'],
+                     event['ip'])
 
     elif action == "die":
         action = "DELETE"
         #
-        #Check for IPv4 Records
+        # Check for IPv4 Records
         #
         response = client.list_resource_record_sets(
-            HostedZoneId=config['dockerddns']['hostedzone'],
+            HostedZoneId=config['hostedzone'],
             StartRecordName=event['hostname'],
             StartRecordType='A',
             MaxItems='1'
-            )
-        #"""
-        #If the number of ResourceRecordSets is 0, means no current entry exists
-        #"""
+        )
+#        #"""
+#        # If the number of ResourceRecordSets is 0, means no current entry exists
+#        #"""
 
         if not response['ResourceRecordSets']:
             logging.info('RESPONSE FALSE')
             return False
 
-        #"""
-        #Check for IPv6 Records
-        #"""
+#        #"""
+#        # Check for IPv6 Records
+#        #"""
 
         responsev6 = client.list_resource_record_sets(
-            HostedZoneId=config['dockerddns']['hostedzone'],
+            HostedZoneId=config['hostedzone'],
             StartRecordName=event['hostname'],
             StartRecordType='AAAA',
             MaxItems='1'
-            )
-        #"""
-        #If the number of ResourceRecordSets is 0, means no current entry exists
-        #"""
+        )
+#        #"""
+#        # If the number of ResourceRecordSets is 0, means no current entry exists
+#        #"""
         if responsev6['ResourceRecordSets'] \
                 and responsev6['ResourceRecordSets'][0]['Name'] == event['hostname']:
-            change = {'Action': action, 'ResourceRecordSet': \
-                    {'Name': event['hostname'], 'Type': 'AAAA', \
-                    'TTL': 300, 'ResourceRecords': [ \
-                    {'Value': responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']}]}}
+            change = {'Action': action, 'ResourceRecordSet':
+                      {'Name': event['hostname'], 'Type': 'AAAA',
+                       'TTL': 300, 'ResourceRecords': [
+                          {'Value': responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']}]}}
             changes.append(change)
-            logging.info('[%s] Removing %s from route53 with ipv6 %s',\
-                    event['name'], event['hostname'], \
-                    responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
+            logging.info('[%s] Removing %s from route53 with ipv6 %s',
+                         event['name'], event['hostname'],
+                         responsev6['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
 
         if response['ResourceRecordSets'] and \
                 response['ResourceRecordSets'][0]['Name'] == event['hostname']:
-            change = {'Action': action, 'ResourceRecordSet': {'Name': event['hostname'], \
-                    'Type':'A', 'TTL': 300, 'ResourceRecords': [ \
-                    {'Value': \
-                    response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']}]}}
+            change = {'Action': action,
+                      'ResourceRecordSet':
+                      {'Name': event['hostname'],
+                       'Type': 'A',
+                       'TTL': 300,
+                       'ResourceRecords':
+                       [
+                           {
+                               'Value': response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value']
+                           }
+                       ]
+                      }
+                     }
             changes.append(change)
-            logging.info('[%s] Removing %s from route53 with ip %s',\
-                    event['name'], event['hostname'], \
-                    response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
+            logging.info('[%s] Removing %s from route53 with ip %s',
+                         event['name'], event['hostname'],
+                         response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
 
     change = {'Action': action , 'ResourceRecordSet': {'Name': event['hostname'], \
             'Type': 'TXT', 'TTL': 300, 'ResourceRecords': [ \
             {'Value': event['id']}]}}
     changes.append(change)
     response = client.change_resource_record_sets(
-        HostedZoneId=config['dockerddns']['hostedzone'],
+        HostedZoneId=config['hostedzone'],
         ChangeBatch={
             'Changes': changes
         })
+
 
 def dockerbind(action, event, config):
     """
     This will update a zone in a bind dns configured for dynamic updates
     """
-    dnsserver = config['dockerddns']['dnsserver']
-    ttl = config['dockerddns']['ttl']
-    port = config['dockerddns']['dnsport']
-    update = dns.update.Update(config['dockerddns']['zonename'],
-                               keyring=config['keyring'], keyname=config['dockerddns']['keyname'])
+    dnsserver = config['dnsserver']
+    ttl = config['ttl']
+    port = config['dnsport']
+    update = dns.update.Update(config['zonename'],
+                               keyring=config['keyring'], keyname=config['keyname'])
     logging.debug('EVENT: %s', event)
     if "srvrecords" in event:
         srvrecords = event["srvrecords"].split()
@@ -218,18 +272,18 @@ def dockerbind(action, event, config):
         update.replace(event['hostname'], ttl, 'A', event['ip'])
         if event['ipv6'] != '':
             update.replace(event['hostname'], ttl, 'AAAA', event['ipv6'])
-            logging.info('[%s] Updating dns %s , setting %s.%s to %s and %s',\
-                event['name'], dnsserver, event['hostname'], config['dockerddns']['zonename'],\
-                event['ip'], event['ipv6'])
+            logging.info('[%s] Updating dns %s , setting %s.%s to %s and %s',
+                         event['name'], dnsserver, event['hostname'], config['zonename'],
+                         event['ip'], event['ipv6'])
         else:
-            logging.info('[%s] Updating dns %s , setting %s.%s to %s',\
-                    event['name'], dnsserver, event['hostname'],\
-                    config['dockerddns']['zonename'], event['ip'])
+            logging.info('[%s] Updating dns %s , setting %s.%s to %s',
+                         event['name'], dnsserver, event['hostname'],
+                         config['zonename'], event['ip'])
 
     elif action == 'die':
-        logging.info('[%s] Removing entry for %s.%s in %s', \
-                     event['name'], event['hostname'], config['dockerddns']['zonename'],\
-                      dnsserver)
+        logging.info('[%s] Removing entry for %s.%s in %s',
+                     event['name'], event['hostname'], config['zonename'],
+                     dnsserver)
         update.delete(event['hostname'])
 
     try:
@@ -245,9 +299,10 @@ def dockerbind(action, event, config):
         response = "BadKey"
 
     if response.rcode() != 0:
-        logging.error("[%s] Error Reported while updating %s (%s/%s)", \
-                      event['name'], event['hostname'], \
-                       dns.rcode.to_text(response.rcode()), response.rcode())
+        logging.error("[%s] Error Reported while updating %s (%s/%s)",
+                      event['name'], event['hostname'],
+                      dns.rcode.to_text(response.rcode()), response.rcode())
+
 
 def process():
     """
@@ -255,19 +310,25 @@ def process():
     """
     config = loadconfig()
     logging.info('Starting Docker DDNS Python Container %s', VERSION)
-    logging.info('Using %s as dns engine', config['dockerddns']['engine'])
-    logging.info('Docker Python SDK Version: %s',docker.constants.version)
-    logging.info('Lower Docker API: %s',docker.constants.MINIMUM_DOCKER_API_VERSION)
-    if "apiversion" in config['dockerddns']:
-        if float(config['dockerddns']['apiversion']) <= float(docker.constants.MINIMUM_DOCKER_API_VERSION):
-                logging.error('Can use API Version lower than supported by docker python SDK')
-                logging.error('Requested Version: %s', config['dockerddns']['apiversion'])
-                logging.error('Minimum Supported Docker API Version: %s', docker.constants.MINIMUM_DOCKER_API_VERSION)
-                sys.exit(3)
+    logging.info('Using %s as dns engine', config['engine'])
+    logging.info('Docker Python SDK Version: %s', docker.constants.version)
+    logging.info('Lower Docker API: %s',
+                 docker.constants.MINIMUM_DOCKER_API_VERSION)
+    if "apiversion" in config:
+        if config['apiversion'] == "auto":
+            config['apiversion'] = docker.constants.DEFAULT_DOCKER_API_VERSION
+        print(config['apiversion'])
+        if float(config['apiversion']) < float(docker.constants.MINIMUM_DOCKER_API_VERSION):
+            logging.error(
+                'Can\'t use API Version lower than supported by docker python SDK')
+            logging.error('Requested Version: %s', config['apiversion'])
+            logging.error('Minimum Supported Docker API Version: %s',
+                          docker.constants.MINIMUM_DOCKER_API_VERSION)
+            sys.exit(3)
     else:
-        config['dockerddns']['apiversion'] = "auto"
-    logging.info('Requested Docker API Version: %s', config['dockerddns']['apiversion'])
-    client = docker.from_env(version=config['dockerddns']['apiversion'])
+        config['apiversion'] = docker.constants.DEFAULT_DOCKER_API_VERSION
+    logging.info('Requested Docker API Version: %s', config['apiversion'])
+    client = docker.from_env(version=config['apiversion'])
     events = client.events(decode=True)
     startup(client)
     for event in events:
@@ -276,16 +337,16 @@ def process():
             containerinfo = container_info(json.dumps(temp.attrs))
             if event['Action'] == 'start':
                 if containerinfo:
-                    logging.debug("Container %s is starting with hostname %s and ipAddr %s"\
-                        , containerinfo['name'],\
-                            containerinfo['hostname'], containerinfo['ip'])
+                    logging.debug("Container %s is starting with hostname %s and ipAddr %s", containerinfo['name'],
+                                  containerinfo['hostname'], containerinfo['ip'])
                     updatedns(event['Action'], containerinfo)
             elif event['Action'] == 'die':
                 if containerinfo:
-                    logging.debug("Container %s is stopping %s", \
-                        containerinfo['name'],\
-                        containerinfo['hostname'])
+                    logging.debug("Container %s is stopping %s",
+                                  containerinfo['name'],
+                                  containerinfo['hostname'])
                     updatedns(event['Action'], containerinfo)
+
 
 def main():
     """
@@ -296,6 +357,7 @@ def main():
     except KeyboardInterrupt:
         logging.info('CTRL-C Pressed, GoodBye!')
         sys.exit()
+
 
 if __name__ == "__main__":
     main()
