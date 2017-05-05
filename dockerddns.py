@@ -73,13 +73,13 @@ def loadconfig():
         help="replace intip with extip when updating the dns on IPv6")
     args = parser.parse_args()
 
-    print(config)
+    logging.debug("Config from file: %s" % config)
     config = vars(args)
     logging.debug('Loading DNS Key Data')
     tsighandle = open(TSIGFILE, mode='r')
     config['keyring'] = dns.tsigkeyring.from_text(json.load(tsighandle))
     tsighandle.close()
-    print("ARGS: %s" % config)
+    logging.debug("Config file after processing parameters: %s" % config)
 
     return config
 
