@@ -167,7 +167,8 @@ def docker53(action, event, config):
                   'ResourceRecordSet': {'Name': event['hostname'],
                                         'Type': 'A',
                                         'TTL': 300,
-                                        'ResourceRecords': [{'Value': event['ip']}]}}
+                                        'ResourceRecords':
+                                        [{'Value': event['ip']}]}}
         changes.append(change)
         if "ipv6" in event:
             change = {'Action': action, 'ResourceRecordSet':
@@ -194,18 +195,18 @@ def docker53(action, event, config):
 
     elif action == "die":
         action = "DELETE"
-        #
-        # Check for IPv4 Records
-        #
+#
+# Check for IPv4 Records
+#
         response = client.list_resource_record_sets(
             HostedZoneId=config['hostedzone'],
             StartRecordName=event['hostname'],
             StartRecordType='A',
             MaxItems='1'
         )
-#        #"""
-#        # If the number of ResourceRecordSets is 0, means no current entry exists
-#        #"""
+#
+# If the number of ResourceRecordSets is 0, means no current entry exists
+#
 
         if not response['ResourceRecordSets']:
             logging.info('RESPONSE FALSE')
