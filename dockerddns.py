@@ -21,7 +21,7 @@ logging.getLogger("requests").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.CRITICAL)
 
-CONFIGFILE = 'dockerddns2.json'
+CONFIGFILE = 'dockerddns.json'
 TSIGFILE = 'secrets.json'
 VERSION = 'rewrite1'
 
