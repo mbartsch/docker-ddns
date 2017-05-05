@@ -11,7 +11,6 @@ import dns
 import dns.tsigkeyring
 import dns.update
 import dns.query
-import boto3
 
 
 logging.basicConfig(format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
@@ -63,6 +62,7 @@ def container_info(container):
     container['fulljson'] = inspect
     networkmode = inspect["HostConfig"]["NetworkMode"]
     container['hostname'] = inspect["Config"]["Hostname"]
+    container['id'] = inspect["Id"]
     container['name'] = inspect["Name"].split('/', 1)[1]
     if "services" in inspect["Config"]["Labels"]:
         container['srvrecords'] = inspect["Config"]["Labels"]["services"]
@@ -98,6 +98,7 @@ def docker53(action, event, config):
     """
     This function will update a hosted zone registry in AWS route53
     """
+    import boto3
     client = boto3.client('route53')
     changes = []
 
@@ -110,12 +111,13 @@ def docker53(action, event, config):
 
 
     if action == "start":
-        change = {'Action': 'UPSERT', 'ResourceRecordSet': {'Name': event['hostname'], \
+        action = "UPSERT"
+        change = {'Action': action, 'ResourceRecordSet': {'Name': event['hostname'], \
                 'Type': 'A', 'TTL': 300, 'ResourceRecords': [ \
                 {'Value': event['ip']}]}}
         changes.append(change)
         if "ipv6" in event:
-            change = {'Action': 'UPSERT', 'ResourceRecordSet': \
+            change = {'Action': action, 'ResourceRecordSet': \
                     {'Name': event['hostname'], 'Type': 'AAAA', \
                     'TTL': 300, 'ResourceRecords': [ \
                     {'Value': event['ipv6']}]}}
@@ -185,6 +187,10 @@ def docker53(action, event, config):
                     event['name'], event['hostname'], \
                     response['ResourceRecordSets'][0]['ResourceRecords'][0]['Value'])
 
+    change = {'Action': action , 'ResourceRecordSet': {'Name': event['hostname'], \
+            'Type': 'TXT', 'TTL': 300, 'ResourceRecords': [ \
+            {'Value': event['id']}]}}
+    changes.append(change)
     response = client.change_resource_record_sets(
         HostedZoneId=config['dockerddns']['hostedzone'],
         ChangeBatch={
@@ -207,6 +213,7 @@ def dockerbind(action, event, config):
             values = srv.split("#")
             print("%s %s\n" % (values, event['hostname']))
 
+    #update.replace(event['hostname'], ttl, 'TXT', "ContainerId:" + event['id'] + ",DockerHost:" + event['host'])
     if action == 'start' and event['ip'] != '0.0.0.0':
         update.replace(event['hostname'], ttl, 'A', event['ip'])
         if event['ipv6'] != '':
