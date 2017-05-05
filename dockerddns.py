@@ -25,6 +25,8 @@ CONFIGFILE = 'dockerddns2.json'
 TSIGFILE = 'secrets.json'
 VERSION = 'rewrite1'
 
+def str2bool(v):
+    return v.lower() in ("yes", "true", "t", "1", "on")
 
 def loadconfig():
     """
@@ -34,10 +36,9 @@ def loadconfig():
     configfh = open(CONFIGFILE, mode='r')
     config = json.load(configfh)
     configfh.close()
-    logging.debug('Loading DNS Key Data')
 
-    parser = argparse.ArgumentParser(description="Dynamic DNS updater",
-                                     epilog="")
+    parser = argparse.ArgumentParser(description="Docker Dynamic DNS updater",
+                                     epilog="All parameters must be configured on the config file, even if they are empty")
     parser.add_argument("--apiversion",
                         default=config['apiversion'],
                         help="Docker api version")
@@ -56,15 +57,19 @@ def loadconfig():
     parser.add_argument("--hostedzone", default=config['hostedzone'],
                         help="Route53 Hostedzone ID")
     parser.add_argument("--intprefix", default=config['intprefix'],
+                        metavar='ffc0::',
                         help="Internal IPv6 Prefix")
     parser.add_argument("--extprefix", default=config['extprefix'],
+                        metavar='2001:db32::',
                         help="External IPv6 Prefix")
-    parser.add_argument("--ipv6replace", default=config['ipv6replace'],
+    parser.add_argument("--ipv6replace", default=config['ipv6replace'], type=str2bool,
+                        metavar='true/false',
                         help="replace intip with extip when updating the dns on IPv6")
     args = parser.parse_args()
 
     print(config)
     config = vars(args)
+    logging.debug('Loading DNS Key Data')
     tsighandle = open(TSIGFILE, mode='r')
     config['keyring'] = dns.tsigkeyring.from_text(json.load(tsighandle))
     tsighandle.close()
