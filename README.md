@@ -24,23 +24,26 @@ docker run -it --rm \
     "zonename"   : "dynamic.mydomain.ntld",
     "intprefix"  : "",
     "extprefix"  : "",
+    "ipv6replace": false,
     "ttl"        : 60,
     "engine"     : "bind",
     "hostedzone" : "ROUTE53HOSTEDZONEID"
   }
 }
 
-dnsserver  = hostname of bind
-dnsport    = port used by bind , you can change it if 53 is blocked
-keyname    = the keyname
-zonename   = ddns zone
-intprefix  = IPv6 prefix on the internal network
-extprefix  = IPv6 on the external network
-apiversion = specify the api version to use when talking to the docker server, auto by default
-engine     = dns engine, currently bind and aws route53
-hostedzone = Route53 Hosted Zone Id
+dnsserver   = hostname of bind
+dnsport     = port used by bind , you can change it if 53 is blocked
+keyname     = the keyname
+zonename    = ddns zone
+intprefix   = IPv6 prefix on the internal network
+extprefix   = IPv6 on the external network
+apiversion  = specify the api version to use when talking to the docker server, auto by default
+engine      = dns engine, currently bind and aws route53
+hostedzone  = Route53 Hosted Zone Id
+ipv6replace = replace the intprefix with the extprefix, it just use a string replace. useful when
+              you have dhcp-pd an docker is in a non routeable network and using nat with it.
 ```
-for how to use intprefix and extprefix please check this gists:
+for how to use intprefix, extprefix and ipv6replace please check this gists:
 https://gist.github.com/mbartsch/5f0b0ab414d3e901f38388792a88321c
 
 
