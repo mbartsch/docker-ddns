@@ -4,6 +4,10 @@ a rewrite of the dockerddns file.
 Other important change is that the files has been renamed from 
 docker-ddns to dockerddns
 
+## NOTE
+dockerddns.json has changed the format, I removed the extra dockerddns key on it
+just to make it simple to parse it on the code.
+
 # Hot To Run
 docker run -it --rm \
 	-v /var/run/docker.sock:/var/run/docker.sock \
@@ -16,7 +20,6 @@ docker run -it --rm \
 ## dockerddns.json
 ```
 {
-  "dockerddns": {
     "apiversion" : "auto",
     "dnsserver"  : "my.dns.server",
     "dnsport"    : 53,
@@ -28,7 +31,6 @@ docker run -it --rm \
     "ttl"        : 60,
     "engine"     : "bind",
     "hostedzone" : "ROUTE53HOSTEDZONEID"
-  }
 }
 
 dnsserver   = hostname of bind
