@@ -7,7 +7,7 @@ import json
 import logging
 import socket
 import sys
-
+import threading
 
 import dns
 import dns.query
@@ -195,26 +195,17 @@ def docker53(action, event, config):
 
     elif action == "die":
         action = "DELETE"
-#
-# Check for IPv4 Records
-#
+
         response = client.list_resource_record_sets(
             HostedZoneId=config['hostedzone'],
             StartRecordName=event['hostname'],
             StartRecordType='A',
             MaxItems='1'
         )
-#
-# If the number of ResourceRecordSets is 0, means no current entry exists
-#
 
         if not response['ResourceRecordSets']:
             logging.info('RESPONSE FALSE')
             return False
-
-#        #"""
-#        # Check for IPv6 Records
-#        #"""
 
         responsev6 = client.list_resource_record_sets(
             HostedZoneId=config['hostedzone'],
@@ -222,9 +213,7 @@ def docker53(action, event, config):
             StartRecordType='AAAA',
             MaxItems='1'
         )
-#        #"""
-#        # If the number of ResourceRecordSets is 0, means no current entry exists
-#        #"""
+
         if responsev6['ResourceRecordSets'] \
                 and responsev6['ResourceRecordSets'][0]['Name'] == event['hostname']:
             change = {
@@ -292,7 +281,6 @@ def dockerbind(action, event, config):
             values = srv.split("#")
             print("%s %s\n" % (values, event['hostname']))
 
-#    update.replace(event['hostname'], ttl, 'TXT', "ContainerId:" + event['id'] + ",DockerHost:" + event['host'])
     if action == 'start' and event['ip'] != '0.0.0.0':
         update.replace(event['hostname'], ttl, 'A', event['ip'])
         if event['ipv6'] != '':
@@ -361,12 +349,18 @@ def process():
     logging.info('Requested Docker API Version: %s', config['apiversion'])
     client = docker.from_env(version=config['apiversion'])
     events = client.events(decode=True)
-    startup(client)
+    startT = threading.Thread(name='initial_thread', target=startup, args=client)
+    startT.setDaemon(True)
+    #startup(client)
+    startT.start()
     for event in events:
         if event['Type'] == "container" and event['Action'] in (
                 'start', 'die'):
-            temp = client.containers.get(event['id'])
-            containerinfo = container_info(json.dumps(temp.attrs))
+            containerinfo = container_info(
+                json.dumps(
+                    client.containers.get(event['id']).attrs
+                    )
+                    )
             if event['Action'] == 'start':
                 if containerinfo:
                     logging.debug(
