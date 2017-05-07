@@ -5,9 +5,11 @@
 import argparse
 import json
 import logging
+import requests
 import socket
 import sys
 import threading
+import time
 
 import dns
 import dns.query
@@ -16,7 +18,7 @@ import dns.update
 import docker
 
 logging.basicConfig(
-    format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
+    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.INFO)
 logging.getLogger("requests").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.CRITICAL)
@@ -84,17 +86,33 @@ def loadconfig():
     return config
 
 
-def startup(client):
+def startup(config):
     """
     This will do the initial check of already running containers and register
     them there is no cleanup if a container dies while this process is down,
     so you may have some leftovers after a while
     """
-    logging.debug('Check running containers and update DDNS')
-    for container in client.containers.list():
-        containerinfo = container_info(json.dumps(container.attrs))
-        if containerinfo:
-            updatedns('start', containerinfo)
+    client = docker.from_env(version=config['apiversion'],timeout=30)
+    logging.info('Starting startup thread')
+    logging.info('Check running containers and update DDNS')
+    try:
+        for container in client.containers.list():
+            containerinfo = container_info(json.dumps(container.attrs))
+            if containerinfo:
+                containerinfo['Action'] = 'start'
+                updatedns(containerinfo)
+                time.sleep(0.5)
+
+    except requests.exceptions.ReadTimeout:
+        logging.error('Timeout requesting information from docker (Read Timeout)')
+        logging.error('Will sleep for 15 seconds and retry')
+        time.sleep(15)
+        startup(config)
+        return
+    except Exception as exception:
+        logging.error('Timeout requesting information from docker %s' % exception)
+        return
+    logging.info('Finished startup thread')
 
 
 def container_info(container):
@@ -126,22 +144,21 @@ def container_info(container):
     return container
 
 
-def updatedns(action, event):
+def updatedns(containerinfo):
     """
     This function will prepare the information from docker before send
     it to the dns engine
     """
-
     config = loadconfig()
-    if "ipv6" in event:
-        if event['ipv6'] != "" and config['ipv6replace'] is True:
-            ipv6addr = event['ipv6'].replace(config['intprefix'],
+    if "ipv6" in containerinfo:
+        if containerinfo['ipv6'] != "" and config['ipv6replace'] is True:
+            ipv6addr = containerinfo['ipv6'].replace(config['intprefix'],
                                              config['extprefix'])
-            event['ipv6'] = ipv6addr
+            containerinfo['ipv6'] = ipv6addr
     if config['engine'] == "bind":
-        return dockerbind(action, event, config)
+        return dockerbind(containerinfo['Action'], containerinfo, config)
     elif config['engine'] == "route53":
-        return docker53(action, event, config)
+        return docker53(containerinfo['Action'], containerinfo, config)
     return False
 
 
@@ -274,52 +291,54 @@ def dockerbind(action, event, config):
         config['zonename'],
         keyring=config['keyring'],
         keyname=config['keyname'])
-    logging.debug('EVENT: %s', event)
-    if "srvrecords" in event:
-        srvrecords = event["srvrecords"].split()
-        for srv in srvrecords:
-            values = srv.split("#")
-            print("%s %s\n" % (values, event['hostname']))
-
-    if action == 'start' and event['ip'] != '0.0.0.0':
-        update.replace(event['hostname'], ttl, 'A', event['ip'])
-        if event['ipv6'] != '':
-            update.replace(event['hostname'], ttl, 'AAAA', event['ipv6'])
-            logging.info(
-                '[%s] Updating dns %s , setting %s.%s to %s and %s',
-                event['name'],
-                dnsserver,
-                event['hostname'],
-                config['zonename'],
-                event['ip'],
-                event['ipv6'])
-        else:
-            logging.info('[%s] Updating dns %s , setting %s.%s to %s',
-                         event['name'], dnsserver, event['hostname'],
-                         config['zonename'], event['ip'])
-
-    elif action == 'die':
-        logging.info('[%s] Removing entry for %s.%s in %s',
-                     event['name'], event['hostname'], config['zonename'],
-                     dnsserver)
-        update.delete(event['hostname'])
-
+    #logging.debug('EVENT: %s', event)
     try:
+        if "srvrecords" in event:
+            srvrecords = event["srvrecords"].split()
+            for srv in srvrecords:
+                values = srv.split("#")
+                print("%s %s\n" % (values, event['hostname']))
+
+        if action == 'start' and event['ip'] != '0.0.0.0':
+            update.replace(event['hostname'], ttl, 'A', event['ip'])
+            if event['ipv6'] != '':
+                update.replace(event['hostname'], ttl, 'AAAA', event['ipv6'])
+                logging.info(
+                    '[%s] Updating dns %s , setting %s.%s to %s and %s',
+                    event['name'],
+                    dnsserver,
+                    event['hostname'],
+                    config['zonename'],
+                    event['ip'],
+                    event['ipv6'])
+            else:
+                logging.info('[%s] Updating dns %s , setting %s.%s to %s',
+                             event['name'], dnsserver, event['hostname'],
+                             config['zonename'], event['ip'])
+
+        elif action == 'die':
+            logging.info('[%s] Removing entry for %s.%s in %s',
+                         event['name'], event['hostname'], config['zonename'],
+                         dnsserver)
+            update.delete(event['hostname'])
+
         response = dns.query.tcp(update, dnsserver, timeout=10, port=port)
+        if response.rcode() != 0:
+            logging.error("[%s] Error Reported while updating %s (%s/%s)",
+                          event['name'], event['hostname'],
+                          dns.rcode.to_text(response.rcode()), response.rcode())
     except (socket.error, dns.exception.Timeout):
         logging.error('Timeout updating DNS')
         response = 'Timeout Socket'
     except dns.query.UnexpectedSource:
         logging.error('Unexpected Source')
         response = 'UnexpectedSource'
+    except dns.exception.SyntaxError:
+        logging.error('Missing parameters to update DNS')
     except dns.tsig.PeerBadKey:
         logging.error('Bad Key for DNS, Check your config files')
         response = "BadKey"
 
-    if response.rcode() != 0:
-        logging.error("[%s] Error Reported while updating %s (%s/%s)",
-                      event['name'], event['hostname'],
-                      dns.rcode.to_text(response.rcode()), response.rcode())
 
 
 def process():
@@ -335,7 +354,6 @@ def process():
     if "apiversion" in config:
         if config['apiversion'] == "auto":
             config['apiversion'] = docker.constants.DEFAULT_DOCKER_API_VERSION
-        print(config['apiversion'])
         if float(config['apiversion']) < float(
                 docker.constants.MINIMUM_DOCKER_API_VERSION):
             logging.error(
@@ -347,34 +365,60 @@ def process():
     else:
         config['apiversion'] = docker.constants.DEFAULT_DOCKER_API_VERSION
     logging.info('Requested Docker API Version: %s', config['apiversion'])
-    client = docker.from_env(version=config['apiversion'])
+    client = docker.from_env(version=config['apiversion'],timeout=15)
     events = client.events(decode=True)
-    startT = threading.Thread(name='initial_thread', target=startup, args=client)
-    startT.setDaemon(True)
-    #startup(client)
-    startT.start()
+    initialupdate = threading.Thread(name='initial_update',
+                                     target=startup,
+                                     kwargs={'config': config},
+                                     daemon=True
+                                    )
+    initialupdate.start()
     for event in events:
+        logging.debug("New Event %s" % event)
         if event['Type'] == "container" and event['Action'] in (
                 'start', 'die'):
-            containerinfo = container_info(
-                json.dumps(
-                    client.containers.get(event['id']).attrs
-                    )
-                    )
-            if event['Action'] == 'start':
-                if containerinfo:
-                    logging.debug(
-                        "Container %s is starting with hostname %s and ipAddr %s",
-                        containerinfo['name'],
-                        containerinfo['hostname'],
-                        containerinfo['ip'])
-                    updatedns(event['Action'], containerinfo)
-            elif event['Action'] == 'die':
-                if containerinfo:
-                    logging.debug("Container %s is stopping %s",
-                                  containerinfo['name'],
-                                  containerinfo['hostname'])
-                    updatedns(event['Action'], containerinfo)
+            containername=event['Actor']['Attributes']['name']
+            try:
+                containerinfo = container_info(
+                    json.dumps(
+                        client.containers.get(event['id']).attrs
+                        )
+                        )
+            except docker.errors.NotFound:
+                logging.warn('Container Not Found, probably exit before processing [%s]' % containername)
+                continue
+            except socket.timeout:
+                logging.critical('Timeout requesting information from docker (Socket Timeout)')
+                continue
+            except requests.exceptions.ReadTimeout:
+                logging.critical('Timeout requesting information from docker (Read Timeout) [%s]' % containername)
+                continue
+            except requests.packages.urllib3.exceptions.ReadTimeoutError:
+                logging.error('Timeout requesting information from docker (Read Timeout 2)')
+                continue
+            except Exception as exception:
+                logging.error('Timeout requesting information from docker %s' % exception)
+                continue
+            containerinfo['Action'] = event['Action']
+            #logging.debug(json.dumps(containerinfo,indent=2))
+            #logging.debug(json.dumps(event,indent=2))
+            if containerinfo['Action'] == 'start':
+                logging.debug(
+                    "Container %s is starting with hostname %s and ipAddr %s",
+                    containerinfo['name'],
+                    containerinfo['hostname'],
+                    containerinfo['ip'])
+            elif containerinfo['Action'] == 'die':
+                logging.debug("Container %s is stopping %s",
+                              containerinfo['name'],
+                              containerinfo['hostname'])
+            #updatedns(event['Action'], containerinfo)
+            updateDNS = threading.Thread(name='updateDNS' + containerinfo['name'],
+                                         target=updatedns,
+                                         args=(containerinfo,),
+                                         daemon=True
+                                        )
+            updateDNS.start()
 
 
 def main():
