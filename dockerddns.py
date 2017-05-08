@@ -27,6 +27,8 @@ CONFIGFILE = 'dockerddns.json'
 TSIGFILE = 'secrets.json'
 VERSION = 'rewrite1'
 
+containercache = {}
+
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1", "on")
@@ -75,13 +77,13 @@ def loadconfig():
         help="replace intip with extip when updating the dns on IPv6")
     args = parser.parse_args()
 
-    logging.debug("Config from file: %s" % config)
+    #logging.debug("Config from file: %s" % config)
     config = vars(args)
     logging.debug('Loading DNS Key Data')
     tsighandle = open(TSIGFILE, mode='r')
     config['keyring'] = dns.tsigkeyring.from_text(json.load(tsighandle))
     tsighandle.close()
-    logging.debug("Config file after processing parameters: %s" % config)
+    #logging.debug("Config file after processing parameters: %s" , config)
 
     return config
 
@@ -97,11 +99,14 @@ def startup(config):
     logging.info('Check running containers and update DDNS')
     try:
         for container in client.containers.list():
-            containerinfo = container_info(json.dumps(container.attrs))
+            containerinfo = container_info(container.attrs,)
+            #Populate the container cache, so we can access
+            #the container information if it's already removed
+            #from docker
+            containercache[container.id] = container.attrs
             if containerinfo:
                 containerinfo['Action'] = 'start'
                 updatedns(containerinfo)
-                time.sleep(0.5)
 
     except requests.exceptions.ReadTimeout:
         logging.error('Timeout requesting information from docker (Read Timeout)')
@@ -110,7 +115,7 @@ def startup(config):
         startup(config)
         return
     except Exception as exception:
-        logging.error('Timeout requesting information from docker %s' % exception)
+        logging.error('Timeout requesting information from docker %s' , exception)
         return
     logging.info('Finished startup thread')
 
@@ -122,7 +127,7 @@ def container_info(container):
     this will return blank when the container is run on net=host as no info
     is provided by docker on ip address
     """
-    inspect = json.loads(container)
+    inspect = container
     container = {}
     container['fulljson'] = inspect
     networkmode = inspect["HostConfig"]["NetworkMode"]
@@ -150,11 +155,10 @@ def updatedns(containerinfo):
     it to the dns engine
     """
     config = loadconfig()
-    if "ipv6" in containerinfo:
-        if containerinfo['ipv6'] != "" and config['ipv6replace'] is True:
-            ipv6addr = containerinfo['ipv6'].replace(config['intprefix'],
-                                             config['extprefix'])
-            containerinfo['ipv6'] = ipv6addr
+    if containerinfo['ipv6'] != "" and config['ipv6replace'] is True:
+        ipv6addr = containerinfo['ipv6'].replace(config['intprefix'],
+                                         config['extprefix'])
+        containerinfo['ipv6'] = ipv6addr
     if config['engine'] == "bind":
         return dockerbind(containerinfo['Action'], containerinfo, config)
     elif config['engine'] == "route53":
@@ -338,7 +342,73 @@ def dockerbind(action, event, config):
     except dns.tsig.PeerBadKey:
         logging.error('Bad Key for DNS, Check your config files')
         response = "BadKey"
+    return event
 
+
+def eventhandler(client,event):
+        containerinfo = {}
+        logging.debug('Running EventHandler')
+        containername = event['Actor']['Attributes']['name']
+        try:
+            containerinfo = container_info(
+                    client.containers.get(event['id']).attrs,
+                    )
+            containerinfo['Action'] = event['Action']
+        except docker.errors.NotFound:
+            if event['id'] in containercache:
+                containerinfo = containercache.pop(event['id'])
+                logging.warn('Container Not Found, probably exit before processing [%s]' , containername)
+                logging.warn('Trying to use cache for container [%s]' , containername)
+            if containerinfo != None:
+                logging.warn('Information found on cache for [%s]' , containername)
+            else:
+                logging.warn('Information not found on cache, skipping....')
+        except socket.timeout:
+            logging.error('Socket Timeout while asking for %s' , containername)
+            if event['id'] in containercache:
+                logging.info('Requesting info from Cache')
+                containerinfo = containercache.pop(event['id'])
+            else:
+                logging.info('Not in Cache')
+        except requests.exceptions.ReadTimeout:
+            logging.critical('Timeout requesting information from docker (Read Timeout) [%s]/[%s]' , containername, event['Action'])
+            logging.debug('Trying to use Cached Information')
+            if event['id'] in containercache:
+                logging.debug('Searching in Cache')
+                containerinfo = containercache.pop(event['id'])
+                logging.debug('Got information from cache %s', containerinfo)
+            else:
+                logging.debug('Trying to get information again from docker')
+                eventhandler(client,event)
+        except requests.packages.urllib3.exceptions.ReadTimeoutError:
+            logging.error('Timeout requesting information from docker (Read Timeout 2)')
+            return
+        except Exception as exception:
+            logging.error('Timeout requesting information from docker EXCEPTION: %s' , exception)
+            return
+        if event['Action'] == 'start':
+            containercache[event['id']] = containerinfo
+            logging.debug(
+                "Container %s is starting with hostname %s and ipAddr %s",
+                containerinfo['name'],
+                containerinfo['hostname'],
+                containerinfo['ip'])
+        elif event['Action'] == 'die':
+            logging.debug("Container %s is stopping %s releasing ip %s",
+                          containerinfo['name'],
+                          containerinfo['hostname'],
+                          containerinfo['ip'])
+        else:
+            return
+        # Setup containercache
+        containerinfo['Action'] = event['Action']
+        logging.debug('Container Cache Info: %s' % len(containercache.keys()))
+        updateDNS = threading.Thread(name='updateDNS' + containerinfo['name'],
+                                     target=updatedns,
+                                     args=(containerinfo,),
+                                     daemon=True
+                                    )
+        updateDNS.start()
 
 
 def process():
@@ -367,58 +437,25 @@ def process():
     logging.info('Requested Docker API Version: %s', config['apiversion'])
     client = docker.from_env(version=config['apiversion'],timeout=15)
     events = client.events(decode=True)
-    initialupdate = threading.Thread(name='initial_update',
+    initialupdate = threading.Thread(name='initial_run',
                                      target=startup,
                                      kwargs={'config': config},
                                      daemon=True
                                     )
     initialupdate.start()
     for event in events:
-        logging.debug("New Event %s" % event)
+        #print("Event %s" % event)
         if event['Type'] == "container" and event['Action'] in (
                 'start', 'die'):
-            containername=event['Actor']['Attributes']['name']
-            try:
-                containerinfo = container_info(
-                    json.dumps(
-                        client.containers.get(event['id']).attrs
-                        )
-                        )
-            except docker.errors.NotFound:
-                logging.warn('Container Not Found, probably exit before processing [%s]' % containername)
-                continue
-            except socket.timeout:
-                logging.critical('Timeout requesting information from docker (Socket Timeout)')
-                continue
-            except requests.exceptions.ReadTimeout:
-                logging.critical('Timeout requesting information from docker (Read Timeout) [%s]' % containername)
-                continue
-            except requests.packages.urllib3.exceptions.ReadTimeoutError:
-                logging.error('Timeout requesting information from docker (Read Timeout 2)')
-                continue
-            except Exception as exception:
-                logging.error('Timeout requesting information from docker %s' % exception)
-                continue
-            containerinfo['Action'] = event['Action']
-            #logging.debug(json.dumps(containerinfo,indent=2))
-            #logging.debug(json.dumps(event,indent=2))
-            if containerinfo['Action'] == 'start':
-                logging.debug(
-                    "Container %s is starting with hostname %s and ipAddr %s",
-                    containerinfo['name'],
-                    containerinfo['hostname'],
-                    containerinfo['ip'])
-            elif containerinfo['Action'] == 'die':
-                logging.debug("Container %s is stopping %s",
-                              containerinfo['name'],
-                              containerinfo['hostname'])
-            #updatedns(event['Action'], containerinfo)
-            updateDNS = threading.Thread(name='updateDNS' + containerinfo['name'],
-                                         target=updatedns,
-                                         args=(containerinfo,),
-                                         daemon=True
-                                        )
-            updateDNS.start()
+            logging.info('Active Threads: %s', threading.active_count())
+            logging.debug('Starting new thread')
+            processevent = threading.Thread(
+                                             target=eventhandler,
+                                             kwargs={'event': event, 'client': client},
+                                             daemon=True
+                                            )
+            processevent.start()
+            logging.debug('Thread started')
 
 
 def main():
