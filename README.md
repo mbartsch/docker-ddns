@@ -8,6 +8,17 @@ docker-ddns to dockerddns
 dockerddns.json has changed the format, I removed the extra dockerddns key on it
 just to make it simple to parse it on the code.
 
+# How it works
+This will be listening to docker events, and when an event is received it will
+gather the information of that container and update the dns based on that 
+information. also will store the container in an in-memory cache , so if the
+container exits and docker is taking too long to update the event or take too
+long to reply to the information request, it still can use the cached information
+to remove the records from the dns, everytime a event is received a thread is
+started to gather the information and process the request, this way the program
+will not block waiting for a response.
+also no stale records should be left, unless the dockerddns process is killed. 
+
 # Hot To Run
 docker run -it --rm \
 	-v /var/run/docker.sock:/var/run/docker.sock \
@@ -81,4 +92,4 @@ https://www.kirya.net/articles/running-a-secure-ddns-service-with-bind/
 # TODO
 This is the list of features I'm planning to implement at some point, in no particular order
    * SRV Records
-   * Cleanup Stale Records
+   * Dump Cache to file , so can recover and cleanup stale records
