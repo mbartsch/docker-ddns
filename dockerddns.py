@@ -18,7 +18,7 @@ import dns.update
 import docker
 
 logging.basicConfig(
-    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.DEBUG)
+    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.INFO)
 logging.getLogger("requests").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.CRITICAL)
@@ -129,7 +129,7 @@ def container_info(container):
     """
     inspect = container
     container = {}
-    container['fulljson'] = inspect
+    container = inspect
     networkmode = inspect["HostConfig"]["NetworkMode"]
     container['hostname'] = inspect["Config"]["Hostname"]
     container['id'] = inspect["Id"]
@@ -399,8 +399,8 @@ def eventhandler(client,event):
                 containerinfo['ip'])
         elif event['Action'] == 'die':
             if event['id'] in containercache:
-                containerinfo = containercache.pop(event['id'])
-                logging.debug('Using Cache for %s', containerinfo['name'])
+                containerinfo = container_info(containercache.pop(event['id']))
+                logging.debug('Using Cache for %s', containerinfo['hostname'])
             else:
                 logging.debug('Container killed , but no info on the cache [%s]', containerinfo)
             logging.debug("Container %s is stopping %s, releasing ip %s",
@@ -457,12 +457,12 @@ def process():
         if event['Type'] == "container" and event['Action'] in (
                 'start', 'die'):
             logging.info('Active Threads: %s', threading.active_count())
-            logging.debug('Starting new thread')
             processevent = threading.Thread(
                                              target=eventhandler,
                                              kwargs={'event': event, 'client': client},
-                                             daemon=True
+                                             daemon=False
                                             )
+            logging.debug('Starting new thread')
             processevent.start()
             logging.debug('Thread started')
 
