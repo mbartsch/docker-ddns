@@ -390,6 +390,7 @@ def eventhandler(client,event):
             return
         #containerinfo['Action'] = event['Action']
         if event['Action'] == 'start':
+            logging.debug('Storing Container Information in the Cache [%s]', containerinfo)
             containercache[event['id']] = containerinfo
             logging.debug(
                 "Container %s is starting with hostname %s and ipAddr %s",
@@ -397,7 +398,11 @@ def eventhandler(client,event):
                 containerinfo['hostname'],
                 containerinfo['ip'])
         elif event['Action'] == 'die':
-            containerinfo = containercache.pop(event['id'])
+            if event['id'] in containercache:
+                containerinfo = containercache.pop(event['id'])
+                logging.debug('Using Cache for %s', containerinfo['name'])
+            else:
+                logging.debug('Container killed , but no info on the cache [%s]', containerinfo)
             logging.debug("Container %s is stopping %s, releasing ip %s",
                           containername,
                           containerinfo['hostname'],
