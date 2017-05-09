@@ -18,7 +18,7 @@ import dns.update
 import docker
 
 logging.basicConfig(
-    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.INFO)
+    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.CRITICAL)
@@ -353,39 +353,42 @@ def eventhandler(client,event):
             containerinfo = container_info(
                     client.containers.get(event['id']).attrs,
                     )
-            containerinfo['Action'] = event['Action']
         except docker.errors.NotFound:
+            logging.warn('Container Not Found, probably exit before processing [%s]' , containername)
             if event['id'] in containercache:
-                containerinfo = containercache.pop(event['id'])
-                logging.warn('Container Not Found, probably exit before processing [%s]' , containername)
-                logging.warn('Trying to use cache for container [%s]' , containername)
+                logging.warn('    Trying to use cache for container [%s]' , containername)
+                containerinfo = containercache[event['id']]
             if containerinfo != None:
-                logging.warn('Information found on cache for [%s]' , containername)
+                logging.warn('        Information found on cache for [%s]' , containername)
             else:
-                logging.warn('Information not found on cache, skipping....')
+                logging.warn('        Information not found on cache, skipping....')
+                return
         except socket.timeout:
             logging.error('Socket Timeout while asking for %s' , containername)
             if event['id'] in containercache:
-                logging.info('Requesting info from Cache')
+                logging.info('    Requesting info from Cache')
                 containerinfo = containercache.pop(event['id'])
             else:
                 logging.info('Not in Cache')
-        except requests.exceptions.ReadTimeout:
+                logging.debug('   Trying to get information again from docker')
+                eventhandler(client,event)
+                return
+        except (requests.exceptions.ReadTimeout, requests.packages.urllib3.exceptions.ReadTimeoutError):
             logging.critical('Timeout requesting information from docker (Read Timeout) [%s]/[%s]' , containername, event['Action'])
             logging.debug('Trying to use Cached Information')
             if event['id'] in containercache:
                 logging.debug('Searching in Cache')
-                containerinfo = containercache.pop(event['id'])
-                logging.debug('Got information from cache %s', containerinfo)
+                containerinfo = containercache[event['id']]
+                if containerinfo:
+                    logging.debug('Got information from cache %s', containerinfo)
             else:
                 logging.debug('Trying to get information again from docker')
                 eventhandler(client,event)
-        except requests.packages.urllib3.exceptions.ReadTimeoutError:
-            logging.error('Timeout requesting information from docker (Read Timeout 2)')
-            return
+                return
         except Exception as exception:
             logging.error('Timeout requesting information from docker EXCEPTION: %s' , exception)
             return
+        #containerinfo['Action'] = event['Action']
         if event['Action'] == 'start':
             containercache[event['id']] = containerinfo
             logging.debug(
@@ -394,8 +397,9 @@ def eventhandler(client,event):
                 containerinfo['hostname'],
                 containerinfo['ip'])
         elif event['Action'] == 'die':
-            logging.debug("Container %s is stopping %s releasing ip %s",
-                          containerinfo['name'],
+            containerinfo = containercache.pop(event['id'])
+            logging.debug("Container %s is stopping %s, releasing ip %s",
+                          containername,
                           containerinfo['hostname'],
                           containerinfo['ip'])
         else:
