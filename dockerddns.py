@@ -18,7 +18,7 @@ import dns.update
 import docker
 
 logging.basicConfig(
-    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.DEBUG)
+    format='%(asctime)s:%(levelname)s:%(threadName)s:%(message)s', level=logging.INFO)
 logging.getLogger("requests").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.CRITICAL)
@@ -100,6 +100,7 @@ def startup(config):
     try:
         for container in client.containers.list():
             containerinfo = container_info(container.attrs,)
+            serviceinfo=service_info(container.attrs,)
             #Populate the container cache, so we can access
             #the container information if it's already removed
             #from docker
@@ -119,6 +120,11 @@ def startup(config):
         return
     logging.info('Finished startup thread')
 
+def service_info(container):
+    """return the service n#ame itnternal and external port"""
+    labels=container['NetworkSettings']['Ports']
+    logging.debug("Ports: %s" , labels)
+    return labels
 
 def container_info(container):
     """
@@ -129,14 +135,12 @@ def container_info(container):
     """
     inspect = container
     container = {}
+    serviceinfo = service_info(inspect)
     container['fulljson'] = inspect
     networkmode = inspect["HostConfig"]["NetworkMode"]
     container['hostname'] = inspect["Config"]["Hostname"]
     container['id'] = inspect["Id"]
     container['name'] = inspect["Name"].split('/', 1)[1]
-    if "services" in inspect["Config"]["Labels"]:
-        container['srvrecords'] = inspect["Config"]["Labels"]["services"]
-        print("%s\n" % (container['srvrecords']))
     if (str(networkmode) != 'host') and ('container:' not in networkmode):
         if str(networkmode) == "default":
             networkmode = "bridge"
@@ -301,9 +305,10 @@ def dockerbind(action, event, config):
             srvrecords = event["srvrecords"].split()
             for srv in srvrecords:
                 values = srv.split("#")
-                print("%s %s\n" % (values, event['hostname']))
+                #print("%s %s\n" % (values, event['hostname']))
 
         if action == 'start' and event['ip'] != '0.0.0.0':
+            #print(event)
             update.replace(event['hostname'], ttl, 'A', event['ip'])
             if event['ipv6'] != '':
                 update.replace(event['hostname'], ttl, 'AAAA', event['ipv6'])
