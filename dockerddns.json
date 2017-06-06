@@ -9,5 +9,6 @@
     "extprefix": "",
     "engine": "bind",
     "ipv6replace": "true",
-    "hostedzone": "ROUTE53HOSTEDZONEID"
+    "hostedzone": "ROUTE53HOSTEDZONEID",
+    "clean-on-shutdown": false
 }

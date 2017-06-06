@@ -75,6 +75,12 @@ def loadconfig():
         type=str2bool,
         metavar='true/false',
         help="replace intip with extip when updating the dns on IPv6")
+    parser.add_argument(
+        "--clean-on-shutdown",
+        default=config['clean-on-shutdown'],
+        type=str2bool,
+        metavar='true/false',
+        help="Remove entries from the DNS on program stop")
     args = parser.parse_args()
 
     #logging.debug("Config from file: %s" % config)
@@ -120,11 +126,45 @@ def startup(config):
         return
     logging.info('Finished startup thread')
 
+
+def shutdown():
+    """
+    This will do the initial check of already running containers and register
+    them there is no cleanup if a container dies while this process is down,
+    so you may have some leftovers after a while
+    """
+    config = loadconfig()
+    logging.info('Starting shutdown thread')
+    try:
+        for container in containercache:
+            containerinfo = container_info(containercache[container])
+            #Populate the container cache, so we can access
+            #the container information if it's already removed
+            #from docker
+            if containerinfo:
+                containerinfo['Action'] = 'die'
+                updatedns(containerinfo)
+
+    except requests.exceptions.ReadTimeout:
+        logging.error('Timeout requesting information from docker (Read Timeout)')
+        logging.error('Will sleep for 15 seconds and retry')
+        time.sleep(15)
+        startup(config)
+        return
+    except Exception as exception:
+        logging.error('Timeout requesting information from docker %s' , exception)
+        return
+    logging.info('Finished startup thread')
+
+
+
 def service_info(container):
     """return the service n#ame itnternal and external port"""
-    labels=container['NetworkSettings']['Ports']
-    logging.debug("Ports: %s" , labels)
-    return labels
+    ports=container['NetworkSettings']['Ports']
+    labels=container['Config']['Labels']
+    logging.debug("Ports : %s" , ports)
+    logging.debug("Labels: %s" , labels)
+    return
 
 def container_info(container):
     """
@@ -479,6 +519,13 @@ def main():
     try:
         process()
     except KeyboardInterrupt:
+        if config[clean_on_shutdown]:
+            logging.info('Removing entries from DNS')
+            shutdowntask = threading.Thread(
+                             target=shutdown,
+                             daemon=False
+                            )
+            shutdowntask.start()
         logging.info('CTRL-C Pressed, GoodBye!')
         sys.exit()
 
