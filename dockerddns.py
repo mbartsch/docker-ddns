@@ -115,8 +115,7 @@ def container_info(container):
         container['srvrecords'] = inspect["Config"]["Labels"]["services"]
         print("%s\n" % (container['srvrecords']))
     if (str(networkmode) != 'host') and ('container:' not in networkmode):
-        if str(networkmode) == "default":
-            networkmode = "bridge"
+        networkmode=list(inspect["NetworkSettings"]["Networks"].keys())[0]
         container['ip'] = \
             inspect["NetworkSettings"]["Networks"][networkmode]["IPAddress"]
         container['ipv6'] = \
