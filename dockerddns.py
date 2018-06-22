@@ -25,7 +25,7 @@ logging.getLogger("botocore").setLevel(logging.CRITICAL)
 
 CONFIGFILE = 'dockerddns.json'
 TSIGFILE = 'secrets.json'
-VERSION = 'rewrite1'
+VERSION = 'rewrite1.1'
 
 containercache = {}
 
