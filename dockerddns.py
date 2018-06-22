@@ -136,7 +136,7 @@ def container_info(container):
     container['name'] = inspect["Name"].split('/', 1)[1]
     if "services" in inspect["Config"]["Labels"]:
         container['srvrecords'] = inspect["Config"]["Labels"]["services"]
-        print("%s\n" % (container['srvrecords']))
+        #print("%s\n" % (container['srvrecords']))
     if (str(networkmode) != 'host') and ('container:' not in networkmode):
         networkmode=list(inspect["NetworkSettings"]["Networks"].keys())[0]
         container['ip'] = \
@@ -300,7 +300,7 @@ def dockerbind(action, event, config):
             srvrecords = event["srvrecords"].split()
             for srv in srvrecords:
                 values = srv.split("#")
-                print("%s %s\n" % (values, event['hostname']))
+                #print("%s %s\n" % (values, event['hostname']))
 
         if action == 'start' and event['ip'] != '0.0.0.0':
             update.replace(event['hostname'], ttl, 'A', event['ip'])
