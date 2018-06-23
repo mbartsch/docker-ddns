@@ -1,7 +1,14 @@
-FROM alpine:latest
+FROM alpine:latest AS builder
 MAINTAINER Marcelo Bartsch <marcelo@bartsch.cl>
 
-COPY requirements.txt docker-ddns.py secrets.json docker-ddns.json /ddns/
-RUN apk --no-cache add py-pip python3-dev libc-dev gcc docker && pip3 install -r /ddns/requirements.txt && chmod +x /ddns/docker-ddns.py && apk --no-cache del gcc libc-dev python3-dev && apk --no-cache add python3
+COPY requirements.txt /
+RUN apk --no-cache add python3 py-pip python3-dev libc-dev gcc docker 
+RUN pip3 install --user -r /requirements.txt 
+
+FROM alpine:latest
+COPY dockerddns.py secrets.json dockerddns.json /ddns/
+RUN apk --no-cache add python3
+RUN chmod +x /ddns/dockerddns.py
+COPY --from=builder /root/.local /root/.local
 WORKDIR /ddns
-ENTRYPOINT [ "/ddns/docker-ddns.py" ]
+ENTRYPOINT [ "/ddns/dockerddns.py" ]
